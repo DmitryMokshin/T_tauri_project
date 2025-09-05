@@ -17,7 +17,9 @@ def get_one_isochrone(target_age, input_tracks):
         'log_g': [],
         'log_R': [],
         'log_Teff': [],
-        'log_L': []
+        'log_L': [],
+        'TESS_flux': [],
+        'TESS_flux_w_ex': []
     }
 
     for m, track in input_tracks.items():
@@ -41,7 +43,9 @@ def get_one_isochrone(target_age, input_tracks):
             'log_g': [row1['log_g'], row2['log_g']],
             'log_R': [row1['log_R'], row2['log_R']],
             'log_Teff': [row1['log_Teff'], row2['log_Teff']],
-            'log_L': [row1['log_L'], row2['log_L']]
+            'log_L': [row1['log_L'], row2['log_L']],
+            'TESS_flux': [row1['TESS_flux'], row2['TESS_flux']],
+            'TESS_flux_w_ex': [row1['TESS_flux_w_ex'], row2['TESS_flux_w_ex']]
         }
 
         # Интерполяция
@@ -50,11 +54,10 @@ def get_one_isochrone(target_age, input_tracks):
 
         for key, arr in values.items():
             interpolator = Akima1DInterpolator(log_age_array, arr)
-            isochrone[key].append(interpolator(target_age))
+            isochrone[key].append(float(interpolator(target_age)))
 
     result_iso = pd.DataFrame(isochrone)
 
-    plt.plot(result_iso['log_Teff'], result_iso['log_L'], label=f'Age: {target_age}')
     return result_iso
 
 def read_one_tess_flux(file_path):
@@ -63,23 +66,25 @@ def read_one_tess_flux(file_path):
     """
     df = pd.read_csv(
         file_path,
-        sep='\s+',
+        sep=r'\s+',
         comment="#",
         header=None,
         names=["logg", "flux", "flux_with_extinction"]
     )
     return df
 
-def read_all_tess_flux(path_dir_tess_flux):
-    str_list_tess_temperature = sorted(os.listdir(path_dir_tess_flux))
+def read_all_tess_flux(path_dir_tess_flux='./tess-tables/'):
+    str_list_tess_temperature = os.listdir(path_dir_tess_flux)
 
-    temp_list = [
-        float(f.replace("tess_flux_", "").replace(".dat", ""))
-        for f in str_list_tess_temperature
-    ]
+    temp_file_pairs = sorted(
+        [(float(f.replace("tess_flux_", "").replace(".dat", "")), f)
+         for f in str_list_tess_temperature],
+        key=lambda x: x[0]
+    )
 
+    temp_list = [t for t, _ in temp_file_pairs]
     dfs = [read_one_tess_flux(os.path.join(path_dir_tess_flux, f))
-           for f in str_list_tess_temperature]
+           for _, f in temp_file_pairs]
 
     logg_list = dfs[0]["logg"].values
 
@@ -87,10 +92,10 @@ def read_all_tess_flux(path_dir_tess_flux):
     grid_flux_with_ext = np.vstack([df["flux_with_extinction"].values for df in dfs])
 
     flux_interpolator = RegularGridInterpolator(
-        (temp_list, logg_list), grid_flux_without_ext
+        (temp_list, logg_list), grid_flux_without_ext, bounds_error=False, fill_value=None
     )
     flux_with_ext_interpolator = RegularGridInterpolator(
-        (temp_list, logg_list), grid_flux_with_ext
+        (temp_list, logg_list), grid_flux_with_ext, bounds_error=False, fill_value=None
     )
 
     return flux_interpolator, flux_with_ext_interpolator
@@ -98,25 +103,40 @@ def read_all_tess_flux(path_dir_tess_flux):
 if __name__ == '__main__':
     file_path_tess_flux = './tess-tables/'
 
-    t_eff = 3900
+    fl_interpolator, fl_with_ext_interpolator = read_all_tess_flux(path_dir_tess_flux=file_path_tess_flux)
 
-    file_name = f'tess_flux_{t_eff:.0f}.dat'
+    dir_with_track = '/home/dmitrii/Science/T_tauri_project/MESA_TRACK/mesa_res/'
+    masses = np.arange(0.75, 7.1, 0.25)
 
-    read_all_tess_flux(path_dir_tess_flux=file_path_tess_flux)
+    tracks = {
+        mass: read_mesa_track(f'{dir_with_track}ROT{0.00:.2f}Z{0.0147}M{mass:.2f}.dat')
+        for mass in masses
+    }
 
-    # print(read_one_tess_flux(file_path_tess_flux + file_name))
-    # dir_with_track = '/home/dmitrii/Science/T_tauri_project/MESA_TRACK/mesa_res/'
-    # masses = np.arange(0.75, 7.1, 0.25)
-    #
-    # tracks = {
-    #     mass: read_mesa_track(f'{dir_with_track}ROT{0.00:.2f}Z{0.0147}M{mass:.2f}.dat')
-    #     for mass in masses
-    # }
-    #
-    # for age in np.arange(5.5, 9.1, 0.5):
-    #     get_one_isochrone(age, tracks)
-    #
-    # plt.grid()
-    # plt.gca().invert_xaxis()
-    # plt.legend()
-    # plt.show()
+    for m, track in tracks.items():
+        print(m, np.log10(track['star_age'].iloc[-1]), track['model_number'].iloc[-1])
+        points = np.column_stack((track["Teff"].values, track["log_g"].values))
+        track['TESS_flux'] = fl_interpolator(points) * np.power(np.power(10.0, track['log_R']), 2.0).to_numpy().astype(float)
+        track['TESS_flux_w_ex'] = fl_with_ext_interpolator(points) * np.power(np.power(10.0, track['log_R']), 2.0).to_numpy().astype(float)
+        # plt.plot(track['log_Teff'], track['log_g'])
+
+
+    for age in np.arange(8.3, 9.0, 0.1):
+        iso = get_one_isochrone(age, tracks)
+        plt.scatter(iso['log_Teff'], iso['log_g'], label=f'Age: {age}')
+
+        iso_filter = iso[
+            (iso['log_g'].between(2.3, 2.7)) &
+            (iso['log_Teff'].between(np.log10(4700), np.log10(4900)))
+            ]
+        if len(iso_filter) > 0.0:
+            print(iso_filter)
+
+
+        # plt.plot(iso['log_Teff'], np.log10(iso['TESS_flux_w_ex']), label=f'With ex Age: {age}', linestyle='--')
+    plt.xlim(np.log10(4700.0), np.log10(4900))
+    plt.ylim(2.3, 2.7)
+    plt.grid()
+    plt.gca().invert_xaxis()
+    plt.legend()
+    plt.show()
