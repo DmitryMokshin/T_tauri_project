@@ -105,8 +105,8 @@ if __name__ == '__main__':
 
     fl_interpolator, fl_with_ext_interpolator = read_all_tess_flux(path_dir_tess_flux=file_path_tess_flux)
 
-    dir_with_track = '/home/dmitrii/Science/T_tauri_project/MESA_TRACK/mesa_res/'
-    masses = np.arange(0.75, 7.1, 0.25)
+    dir_with_track = '/home/dmitrii/Science/T_tauri_project/MESA_TRACK/mesa_tracks_2/'
+    masses = np.arange(2.25, 7.1, 0.25)
 
     tracks = {
         mass: read_mesa_track(f'{dir_with_track}ROT{0.00:.2f}Z{0.0147}M{mass:.2f}.dat')
@@ -114,29 +114,38 @@ if __name__ == '__main__':
     }
 
     for m, track in tracks.items():
-        print(m, np.log10(track['star_age'].iloc[-1]), track['model_number'].iloc[-1])
+        # print(m, np.log10(track['star_age'].iloc[-1]), track['model_number'].iloc[-1])
         points = np.column_stack((track["Teff"].values, track["log_g"].values))
         track['TESS_flux'] = fl_interpolator(points) * np.power(np.power(10.0, track['log_R']), 2.0).to_numpy().astype(float)
         track['TESS_flux_w_ex'] = fl_with_ext_interpolator(points) * np.power(np.power(10.0, track['log_R']), 2.0).to_numpy().astype(float)
         # plt.plot(track['log_Teff'], track['log_g'])
 
 
-    for age in np.arange(8.3, 9.0, 0.1):
-        iso = get_one_isochrone(age, tracks)
-        plt.scatter(iso['log_Teff'], iso['log_g'], label=f'Age: {age}')
+    # for age in np.arange(0.5, 9.0, 0.1):
+    #     iso = get_one_isochrone(age, tracks)
+    #     plt.plot(iso['log_Teff'], iso['log_g'], label=f'Age: {age: 0.2f}')
+    # for mass in masses:
+    #     if 4 <= mass <= 7:
+    #         plt.plot(tracks[mass]['log_Teff'], tracks[mass]['log_L'], label=f'M: {mass: 2.2f}', linestyle='--', alpha=0.9)
+    track_4 = read_mesa_track('ROT0.00Z0.0147M4.00.dat')
 
-        iso_filter = iso[
-            (iso['log_g'].between(2.3, 2.7)) &
-            (iso['log_Teff'].between(np.log10(4700), np.log10(4900)))
-            ]
-        if len(iso_filter) > 0.0:
-            print(iso_filter)
+    plt.plot(np.log10(track_4['star_age']), track_4['log_g'])
+    plt.errorbar(np.log10(track_4['star_age']), 3.3 * np.ones(len(track_4)), color='red')
+    plt.errorbar(np.log10(track_4['star_age']), 2.1 * np.ones(len(track_4)), color='red')
+    # plt.errorbar(np.log10(4800), 2.5, 0.2, np.log(10) / 4800.0 * 100.0, color='red')
+
+        # iso_filter = iso[
+        #     (iso['log_g'].between(2.3, 2.7)) &
+        #     (iso['log_Teff'].between(np.log10(4700), np.log10(4900)))
+        #     ]
+        # if len(iso_filter) > 0.0:
+        #     print(iso_filter)
 
 
         # plt.plot(iso['log_Teff'], np.log10(iso['TESS_flux_w_ex']), label=f'With ex Age: {age}', linestyle='--')
-    plt.xlim(np.log10(4700.0), np.log10(4900))
-    plt.ylim(2.3, 2.7)
+    # plt.xlim(np.log10(4700.0), np.log10(4900))
+    # plt.ylim(2.3, 2.7)
+    # plt.gca().invert_xaxis()
     plt.grid()
-    plt.gca().invert_xaxis()
     plt.legend()
     plt.show()
