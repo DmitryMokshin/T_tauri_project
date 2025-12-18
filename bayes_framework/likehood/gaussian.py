@@ -24,6 +24,7 @@ class GaussianLikelihoodBinStars:
         likelihood_grid = {}
 
         for age in age_grid:
+            print(round(min(pred[1][age]), 2), round(max(pred[1][age]), 2))
             likelihood_grid[age] = 1.0 / 2.0 / np.pi * 1.0 / np.sqrt(self.observ_err[0] * self.observ_err[1]) * np.exp(
                 -np.power(self.observ_data[0] - model_data[age][0], 2.0) / 2.0 / np.power(self.observ_err[0], 2.0)) * np.exp(
                 -np.power(self.observ_data[1] - model_data[age][1], 2.0) / 2.0 / np.power(self.observ_err[1], 2.0))
