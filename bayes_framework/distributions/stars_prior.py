@@ -4,16 +4,30 @@ from bayes_framework.distributions.standard_distributions import UniformDistribu
 
 class PriorBinStars:
     def __init__(self, age_grid):
-        self.min_age = min(age_grid)
-        self.max_age = max(age_grid)
+        self.min_age = age_grid.min()
+        self.max_age = age_grid.max()
+
+        self.imf = KroupaInitialMassFunction()
+        self.age_norm = 1.0 / (self.max_age - self.min_age)
 
     def __call__(self, age, mass_1, mass_2):
-        kroupa_general = KroupaInitialMassFunction()
+        """
+        Vectorized prior:
+        age, mass_1, mass_2 can be scalars or numpy arrays
+        """
 
-        kroupa_1 = kroupa_general.prob(mass_1)
-        kroupa_2 = kroupa_general.prob(mass_2)
+        age = np.asarray(age)
 
-        return UniformDistributions(self.min_age, self.max_age).pdf(age) * kroupa_1 * kroupa_2
+        # --- uniform age prior ---
+        p_age = np.zeros_like(age, dtype=float)
+        mask_age = (age >= self.min_age) & (age <= self.max_age)
+        p_age[mask_age] = self.age_norm
+
+        # --- IMF ---
+        p_m1 = self.imf.prob(mass_1)
+        p_m2 = self.imf.prob(mass_2)
+
+        return p_age * p_m1 * p_m2
 
 
 class KroupaInitialMassFunction:
@@ -24,13 +38,35 @@ class KroupaInitialMassFunction:
         self.a_coef = 0.2791
 
     def prob(self, mass):
-        if 0.1 <= mass <= 1.0:
-            return self.k_kroupa * 1.0 / mass * np.exp(
-                -np.power(np.log10(mass) - np.log10(self.mass_c), 2.0) / 2.0 / np.power(self.sigma_lm, 2.0))
-        elif 1.0 < mass <= 150:
-            return self.k_kroupa * self.a_coef * np.power(mass, -2.35)
-        else:
-            return None
+        """
+        Vectorized Kroupa IMF.
+        mass : float or np.ndarray
+        """
+
+        mass = np.asarray(mass)
+        p = np.zeros_like(mass, dtype=float)
+
+        mask_low = (mass >= 0.1) & (mass <= 1.0)
+        mask_high = (mass > 1.0) & (mass <= 150.0)
+
+        # log-normal part
+        p[mask_low] = (
+            self.k_kroupa
+            / mass[mask_low]
+            * np.exp(
+                - (np.log10(mass[mask_low]) - np.log10(self.mass_c))**2
+                / (2.0 * self.sigma_lm**2)
+            )
+        )
+
+        # power-law part
+        p[mask_high] = (
+            self.k_kroupa
+            * self.a_coef
+            * mass[mask_high]**(-2.35)
+        )
+
+        return p
 
 
 if __name__ == '__main__':

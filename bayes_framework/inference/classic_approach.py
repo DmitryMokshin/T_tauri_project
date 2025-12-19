@@ -1,6 +1,6 @@
 import numpy as np
 from matplotlib import pyplot as plt
-from matplotlib import gridspec
+from matplotlib.gridspec import GridSpec
 
 from bayes_framework.models.isochrone_bin_stars import Isochrone_Bin_Stars_Model
 from bayes_framework.likehood.gaussian import GaussianLikelihoodBinStars
@@ -17,65 +17,188 @@ class InferenceBaseClassicApproach:
     """
 
     def __init__(self, model, prior, observed_parameters, err_observed_parameters):
-        self.P_m2 = None
-        self.P_m1 = None
-        self.P_age = None
-        self.p_m1_m2_2d = None
-        self.p_age_m2_2d = None
-        self.p_age_m1_2d = None
-        self.posterior_grid = None
+
         self.model = model
         self.prior = prior
 
         self.observed_parameters = observed_parameters
         self.err_observed_parameters = err_observed_parameters
 
+        self.age_grid = None
+        self.mass_grid = None
+
+        self.posterior_grid = None
+
+        self.p_age_m1_2d = None
+        self.p_age_m2_2d = None
+        self.p_m1_m2_2d = None
+
+        self.P_age = None
+        self.P_m1 = None
+        self.P_m2 = None
+
     def compute_posterior(self, input_parameters_grid):
-        age_grid = input_parameters_grid[0]
-        mass_grid = input_parameters_grid[1]
+        self.age_grid, self.mass_grid = input_parameters_grid
 
-        dt = age_grid[1] - age_grid[0]
-        dm = mass_grid[1] - mass_grid[0]
+        age = self.age_grid
+        mass = self.mass_grid
 
-        num_mass = len(mass_grid)
-        num_age = len(age_grid)
+        dt = age[1] - age[0]
+        dm = mass[1] - mass[0]
 
-        likelihood_grid = GaussianLikelihoodBinStars(self.observed_parameters, self.err_observed_parameters,
-                                                     self.model)(
-            [age_grid, mass_grid])
+        print('Begin computing likelihood')
 
-        posterior_grid = np.zeros([num_age, num_mass, num_mass])
+        likelihood = GaussianLikelihoodBinStars(
+            self.observed_parameters,
+            self.err_observed_parameters,
+            self.model
+        )([age, mass])
 
-        for k in range(num_age):
-            for l in range(num_mass):
-                for m in range(num_mass):
-                    posterior_grid[k, l, m] = likelihood_grid[k, l, m] * self.prior(age_grid[k], mass_grid[l],
-                                                                                    mass_grid[m])
+        print('End computing likelihood')
 
-        self.posterior_grid = normalize_posterior_grid(posterior_grid, age_grid, mass_grid)
+        print('Begin computing prior')
 
-        res = find_max_3d(self.posterior_grid, age_grid, mass_grid)
+        A, M1, M2 = np.meshgrid(age, mass, mass, indexing='ij')
 
+        prior_grid = self.prior(A, M1, M2)
+
+        print('End computing prior')
+
+        # --- posterior ---
+        self.posterior_grid = normalize_posterior_grid(
+            likelihood * prior_grid,
+            age,
+            mass
+        )
+
+        print('End computing posterior')
+
+        # --- максимум ---
+        res = find_max_3d(self.posterior_grid, age, mass)
         print(res)
 
-        maps = marginalize(self.posterior_grid, dt, dm)
+        # --- маргинализация ---
+        (
+            self.p_age_m1_2d,
+            self.p_age_m2_2d,
+            self.p_m1_m2_2d,
+            self.P_age,
+            self.P_m1,
+            self.P_m2
+        ) = marginalize(self.posterior_grid, dt, dm)
 
-        self.p_age_m1_2d = maps[0]
-        self.p_age_m2_2d = maps[1]
-        self.p_m1_m2_2d = maps[2]
+        # --- графики ---
+        self._plot_1d_distributions()
 
-        self.P_age = maps[3]
-        self.P_m1 = maps[4]
-        self.P_m2 = maps[5]
+        self.plot_maps()
 
-        plt.plot(age_grid, self.P_age)
-        plt.show()
+    def _plot_1d_distributions(self):
 
-        plt.plot(mass_grid, self.P_m1)
-        plt.show()
+        plots = [
+            (self.age_grid, self.P_age, 'Age', 'Marginal_Age_Distribution.png'),
+            (self.mass_grid, self.P_m1, 'Primary Mass', 'Primary_Mass_Distribution.png'),
+            (self.mass_grid, self.P_m2, 'Secondary Mass', 'Secondary_Mass_Distribution.png'),
+        ]
 
-        plt.plot(mass_grid, self.P_m2)
-        plt.show()
+        for x, y, label, fname in plots:
+            plt.figure()
+            plt.plot(x, y)
+            plt.xlabel(label, fontsize=16)
+            plt.ylabel('Probability', fontsize=16)
+            plt.grid(True)
+            plt.tight_layout()
+            plt.savefig(fname, dpi=150)
+            plt.close()
+
+    def plot_maps(self):
+
+        # ---- единая шкала цветов ----
+        vmin = min(
+            self.p_age_m2_2d.min(),
+            self.p_m1_m2_2d.min(),
+            self.p_age_m1_2d.min()
+        )
+        vmax = max(
+            self.p_age_m2_2d.max(),
+            self.p_m1_m2_2d.max(),
+            self.p_age_m1_2d.max()
+        )
+
+        # ---- figure + gridspec ----
+        fig = plt.figure(figsize=(16, 9))
+        gs = GridSpec(2, 2, figure=fig, hspace=0.0, wspace=0.0)
+
+        ax_age_m2 = fig.add_subplot(gs[0, 0])
+        ax_m1_m2 = fig.add_subplot(gs[1, 0], sharex=ax_age_m2)
+        ax_age_m1 = fig.add_subplot(gs[1, 1], sharey=ax_m1_m2)
+
+        # ---- карты ----
+        im1 = ax_age_m2.imshow(
+            self.p_age_m2_2d,
+            origin='lower',
+            aspect='auto',
+            cmap='gray_r',
+            vmin=vmin,
+            vmax=vmax,
+            extent=[
+                self.mass_grid.min(), self.mass_grid.max(),
+                self.age_grid.min(), self.age_grid.max()
+            ]
+        )
+
+        im2 = ax_m1_m2.imshow(
+            self.p_m1_m2_2d,
+            origin='lower',
+            aspect='auto',
+            cmap='gray_r',
+            vmin=vmin,
+            vmax=vmax,
+            extent=[
+                self.mass_grid.min(), self.mass_grid.max(),
+                self.mass_grid.min(), self.mass_grid.max()
+            ]
+        )
+
+        im3 = ax_age_m1.imshow(
+            self.p_age_m1_2d,
+            origin='lower',
+            aspect='auto',
+            cmap='gray_r',
+            vmin=vmin,
+            vmax=vmax,
+            extent=[
+                self.age_grid.min(), self.age_grid.max(),
+                self.mass_grid.min(), self.mass_grid.max()
+            ]
+        )
+
+        # ---- сетка ----
+        for ax in (ax_age_m2, ax_m1_m2, ax_age_m1):
+            ax.grid(True, linestyle=':', alpha=0.4)
+
+        # ---- подписи ----
+        ax_m1_m2.set_xlabel(r'$M_2\,[M_\odot]$')
+        ax_m1_m2.set_ylabel(r'$M_1\,[M_\odot]$')
+
+        ax_age_m2.set_ylabel(r'Log Age', fontsize=20)
+        ax_age_m1.set_xlabel(r'Log Age', fontsize=20)
+
+        # ---- скрываем лишние тики ----
+        ax_age_m2.tick_params(labelbottom=False)
+        ax_age_m1.tick_params(labelleft=False)
+
+        # ---- общий colorbar ----
+        cbar = fig.colorbar(
+            im1,
+            ax=(ax_age_m2, ax_m1_m2, ax_age_m1),
+            shrink=0.8,
+            pad=0.02
+        )
+        cbar.set_label('Posterior probability', fontsize=20)
+
+        plt.savefig('Maps_distributions.png', dpi=150, format='png')
+        plt.close()
+
 
 def find_max_3d(P, age_grid, mass_grid):
     """
@@ -138,11 +261,11 @@ def marginalize(post, dt, dm):
 
 
 if __name__ == "__main__":
-    age_grid_input = np.arange(5.0, 9.0, 0.01)
-    mass_grid_input = np.arange(1.0, 7.0, 0.05)
+    age_grid_input = np.arange(7.0, 9.0, 0.01)
+    mass_grid_input = np.arange(1.0, 7.0, 0.01)
 
     observ_mf = 0.1373
-    observ_f = 1.21
+    observ_f = 1.91
 
     err_mf = 0.0002
     err_f = 0.05
@@ -152,5 +275,3 @@ if __name__ == "__main__":
                                                [err_mf, err_f])
 
     core_method.compute_posterior([age_grid_input, mass_grid_input])
-
-
